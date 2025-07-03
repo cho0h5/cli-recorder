@@ -1,7 +1,14 @@
 use clap::Parser;
-use cpal::traits::{DeviceTrait, HostTrait};
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::SampleFormat;
+use ctrlc;
+use hound;
 use std::error::Error;
 use std::path::Path;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -19,8 +26,78 @@ fn main() -> Result<(), Box<dyn Error>> {
         None => return Ok(()),
     };
 
+    let unique_file = make_unique_filename(&file);
+
     println!("Selected device: {}", device.name()?);
-    println!("Output file: {}", file);
+    println!("Output file: {}", unique_file);
+
+    record_audio(device, unique_file)?;
+
+    Ok(())
+}
+
+fn record_audio(device: cpal::Device, filename: String) -> Result<(), Box<dyn Error>> {
+    let config = device.default_input_config()?;
+    let stream_config: cpal::StreamConfig = config.clone().into();
+
+    if config.sample_format() != SampleFormat::F32 {
+        return Err("This recorder supports only f32 sample format.".into());
+    }
+
+    let spec = hound::WavSpec {
+        channels: config.channels(),
+        sample_rate: config.sample_rate().0,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let writer = Arc::new(std::sync::Mutex::new(Some(hound::WavWriter::create(
+        &filename, spec,
+    )?)));
+
+    let running = Arc::new(AtomicBool::new(true));
+    {
+        let running = running.clone();
+        ctrlc::set_handler(move || {
+            running.store(false, Ordering::SeqCst);
+        })?;
+    }
+
+    println!(
+        "Recording... (Ctrl+C to stop)\nchannels: {}, sample_rate: {}, format: {:?}",
+        config.channels(),
+        config.sample_rate().0,
+        config.sample_format()
+    );
+
+    let writer_clone = writer.clone();
+
+    let stream = device.build_input_stream(
+        &stream_config,
+        move |data: &[f32], _: &cpal::InputCallbackInfo| {
+            if let Some(ref mut w) = *writer_clone.lock().unwrap() {
+                for &sample in data {
+                    let clamped = sample.max(-1.0).min(1.0);
+                    let i16_sample = (clamped * i16::MAX as f32) as i16;
+                    let _ = w.write_sample(i16_sample);
+                }
+            }
+        },
+        |err| eprintln!("Stream error: {:?}", err),
+        None,
+    )?;
+
+    stream.play()?;
+
+    while running.load(Ordering::SeqCst) {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    println!("Stopping and saving...");
+    let mut guard = writer.lock().unwrap();
+    if let Some(wav_writer) = guard.take() {
+        wav_writer.finalize()?;
+    }
+    println!("Saved: {}", filename);
 
     Ok(())
 }
