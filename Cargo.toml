@@ -2,8 +2,9 @@
 name = "cli-recorder"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+authors = ["Youngho Cho <dominoyh5@gmail.com>"]
+license = "MIT"
+repository = "https://github.com/cho0h5/cli-recorder"
 
 [dependencies]
 cpal = "0.15"
