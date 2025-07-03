@@ -1,6 +1,7 @@
 use clap::Parser;
 use cpal::traits::{DeviceTrait, HostTrait};
 use std::error::Error;
+use std::path::Path;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -22,6 +23,23 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("Output file: {}", file);
 
     Ok(())
+}
+
+fn make_unique_filename(filename: &str) -> String {
+    let path = Path::new(filename);
+    if !path.exists() {
+        return filename.to_string();
+    }
+    let stem = path.file_stem().unwrap().to_string_lossy();
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("wav");
+    let mut i = 1;
+    loop {
+        let candidate = format!("{}_{}.{}", stem, i, ext);
+        if !Path::new(&candidate).exists() {
+            return candidate;
+        }
+        i += 1;
+    }
 }
 
 fn parse_args_and_select_device() -> Result<Option<(cpal::Device, String)>, Box<dyn Error>> {
